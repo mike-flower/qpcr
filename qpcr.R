@@ -591,8 +591,7 @@ comparative_ct <- comparative_ct %>%
 # Unique ID and first grouping variable
 comparative_ct <- comparative_ct %>%
   dplyr::mutate(!!sym(unique_id) := factor(!!sym(unique_id), levels = levels_id),
-                !!sym(xvar) := factor(!!sym(xvar), levels = levels_xvar)) %>%
-  droplevels()
+                !!sym(xvar) := factor(!!sym(xvar), levels = levels_xvar))
 
 if (!is.na(facet_col)) {
   comparative_ct <- comparative_ct %>%
@@ -603,6 +602,11 @@ if (!is.na(facet_row)) {
   comparative_ct <- comparative_ct %>%
     dplyr::mutate(!!sym(facet_row) := factor(!!sym(facet_row), levels = levels_facetrow))
 }
+
+# Drop unused levels
+comparative_ct <- comparative_ct %>%
+  droplevels() %>%
+  mutate_if(is.numeric, ~ifelse(is.nan(.), NA, .))
 
 
 #===============================================================================
@@ -621,75 +625,128 @@ write.xlsx(as.data.frame(comparative_ct), file = file.path(out.dir, "qpcr.xlsx")
 #===============================================================================
 plots <- lapply(setNames(goi, goi), function(g) {
   
-  # t-test
-  ttest <- comparative_ct %>%
-    t_test(as.formula(paste0("relative_expression_", g, " ~ ", xvar))) %>%
-    add_y_position()
-  ttest
+  # # Manual
+  # g = goi[[2]]
   
-  # Plot ttest
-  plot_ttest <-
-    ggplot(comparative_ct, aes(x = !!sym(xvar), y = !!sym(paste0("relative_expression_", g)))) +
-    geom_boxplot(outlier.size = 0, position = position_dodge(width = 0.9)) +
-    geom_jitter(width = 0.1,height = 0, size = 3) +
-    stat_summary(fun = mean, colour = "darkred", geom = "point", 
-                 shape = 18, size = 4, show.legend = FALSE) + 
-    stat_summary(fun = mean, colour = "darkred", geom = "text", show.legend = FALSE, 
-                 vjust = -0.7,
-                 aes(label = after_stat(round(y, 2)))) +
-    stat_pvalue_manual(ttest, 
-                       label = ifelse("p.adj.signif" %in% names(ttest), "p.adj.signif", "p"),
-                       tip.length = 0.01, hide.ns = T) +
-    scale_y_continuous(expand = expansion(mult = c(NA, 0.2)),
-                       limits = c(0, NA)) +
-    labs(title = g,
-         x = x_label,
-         y = "Relative expression") +
-    theme(plot.title = element_text(hjust = 0.5, face = "bold"),
-          axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
-          text = element_text(size = 20))
+  # Only try and plot if there is some data!
+  if(sum(!is.na(comparative_ct[[paste0("relative_expression_", g)]])) > 0) {
   
-  
-  # ggstatsplot
-  plot_ggstatsplot <-
-    tryCatch(
+    # Count xvar variables with >1 measurement (need at least two with >2 measurements for ttest to work)
+    rep_count <- comparative_ct %>%
+      group_by(!!sym(xvar)) %>%
+      dplyr::summarise(n = n())
+    
+    if(sum(rep_count$n > 1) > 1) {
       
-      ggbetweenstats(data = comparative_ct,
-                     x = !!sym(xvar), xlab = x_label,
-                     y = !!sym(paste0("relative_expression_", g)), ylab = "Relative expression",
-                     title = g) +
-                     # package = "rcartocolor", palette = "Vivid") +
-        theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 20),
-              axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, size = 15),
-              text = element_text(size = 15))
+      # t-test
+      ttest <- comparative_ct %>%
+        left_join(rep_count, by = xvar) %>%
+        filter(n > 1) %>%
+        t_test(as.formula(paste0("relative_expression_", g, " ~ ", xvar))) %>%
+        add_y_position()
+      ttest
       
-      , error = function(e)
+      # Boxplot with ttest
+      plot_ttest <-
+        ggplot(comparative_ct, aes(x = !!sym(xvar), y = !!sym(paste0("relative_expression_", g)))) +
+        geom_violin(trim = TRUE) +
+        geom_boxplot(outlier.shape = NA, width=0.1) +
+        geom_jitter(width = 0.1,height = 0, size = 3) +
+        stat_summary(fun = mean, colour = "darkred", geom = "point", 
+                     shape = 18, size = 4, show.legend = FALSE) + 
+        stat_summary(fun = mean, colour = "darkred", geom = "text", show.legend = FALSE, 
+                     vjust = -0.7,
+                     aes(label = after_stat(round(y, 2)))) +
+        stat_pvalue_manual(ttest,
+                           label = ifelse("p.adj.signif" %in% names(ttest), "p.adj.signif", "p"),
+                           tip.length = 0.01, hide.ns = T) +
+        scale_y_continuous(expand = expansion(mult = c(NA, 0.2)),
+                           limits = c(0, NA)) +
+        labs(title = g,
+             x = x_label,
+             y = "Relative expression") +
+        theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+              axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+              text = element_text(size = 20))
+      
+    } else {
+      
+      # Boxplot without ttest
+      plot_ttest <-
+        ggplot(comparative_ct, aes(x = !!sym(xvar), y = !!sym(paste0("relative_expression_", g)))) +
+        geom_violin(trim = TRUE) +
+        geom_boxplot(outlier.shape = NA, width=0.1) +
+        geom_jitter(width = 0.1,height = 0, size = 3) +
+        stat_summary(fun = mean, colour = "darkred", geom = "point", 
+                     shape = 18, size = 4, show.legend = FALSE) + 
+        stat_summary(fun = mean, colour = "darkred", geom = "text", show.legend = FALSE, 
+                     vjust = -0.7,
+                     aes(label = after_stat(round(y, 2)))) +
+        scale_y_continuous(expand = expansion(mult = c(NA, 0.2)),
+                           limits = c(0, NA)) +
+        labs(title = g,
+             x = x_label,
+             y = "Relative expression") +
+        theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+              axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+              text = element_text(size = 20))
+      
+    }
+    
+    
+    # ggstatsplot
+    plot_ggstatsplot <-
+      tryCatch(
         
         ggbetweenstats(data = comparative_ct,
                        x = !!sym(xvar), xlab = x_label,
                        y = !!sym(paste0("relative_expression_", g)), ylab = "Relative expression",
-                       title = g,
-                       pairwise.comparisons = FALSE) +
-        theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 20),
-              axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, size = 15),
-              text = element_text(size = 15))
-      
-        )
+                       title = g) +
+          # package = "rcartocolor", palette = "Vivid") +
+          theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 20),
+                axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, size = 15),
+                text = element_text(size = 15))
         
-  # Output
-  return(list(plot_ttest = plot_ttest,
-              plot_ggstatsplot = plot_ggstatsplot))
+        , error = function(e)
+          
+          ggbetweenstats(data = comparative_ct,
+                         x = !!sym(xvar), xlab = x_label,
+                         y = !!sym(paste0("relative_expression_", g)), ylab = "Relative expression",
+                         title = g,
+                         pairwise.comparisons = FALSE) +
+          theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 20),
+                axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, size = 15),
+                text = element_text(size = 15))
+        
+      )
+  
+  } else {
+    
+    plot_ttest <- NA
+    plot_ggstatsplot <- NA
+    
+  }
+      
+    # Output
+    return(list(plot_ttest = plot_ttest,
+                plot_ggstatsplot = plot_ggstatsplot))
     
 })
 
+
+# Extract ttest plots (remove NA)
+p <- lapply(plots, extract_sublist, sub = "plot_ttest")
+p <- p[!is.na(p)]
 print(
-  wrap_plots(lapply(plots, extract_sublist, sub = "plot_ttest"))
+  wrap_plots(p)
 )
 
+# Extract ggstatsplots (remove NA)
+p <- lapply(plots, extract_sublist, sub = "plot_ggstatsplot")
+p <- p[!is.na(p)]
 print(
-  wrap_plots(lapply(plots, extract_sublist, sub = "plot_ggstatsplot"))
+  wrap_plots(p)
 )
-
 
 
 
