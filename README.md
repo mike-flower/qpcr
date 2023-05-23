@@ -82,6 +82,7 @@ Download the example settings excel file and complete for your samples (one samp
 - reporter2 ...
 - target1 = the target gene that corresponds to reporter1.
 - target2 ...
+- calibrator = column indicating calibrator samples (any character other than NA indicates a calibrator).
 - exclude = column indicating which samples to exclude the from the analysis.
 
 
