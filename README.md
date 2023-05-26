@@ -78,6 +78,7 @@ Download the example settings excel file and complete for your samples (one samp
 - filename = name of the .xls file.
 - well = well number, in 'A01' format
 - sample_id = a unique identifier for each sample.
+- group = column containing grouping variable. You can include up to three grouping columns. DO NOT NAME THEM group1, group2 etc. These names are used by the ttest function. Naming convention group_1, group_2 etc is fine.
 - reporter1 = the first reporter dye used in each well, e.g. FAM, VIC etc.
 - reporter2 ...
 - target1 = the target gene that corresponds to reporter1.

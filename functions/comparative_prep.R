@@ -24,14 +24,18 @@ comparative_prep <- function(ct, settings) {
     oe <- x %>%
       group_by(!!sym(unique_id)) %>%
       dplyr::summarise(total = n(),
-                       outliers = sum(outlier == TRUE),
+                       tech_outliers = sum(tech_outlier == TRUE),
                        exclusions = sum(!is.na(!!sym(exclusion_var))))
     
     # Remove outliers and exclusions
     y <- x %>%
-      {if (remove_outliers == "Yes")
-      {dplyr::filter(., outlier != TRUE, is.na(!!sym(exclusion_var)))}
-        else {dplyr::filter(., is.na(!!sym(exclusion_var)))}} # https://stackoverflow.com/questions/47624161/use-filter-in-dplyr-conditional-on-an-if-statement-in-r
+      {if (remove_outliers) {
+        dplyr::filter(., tech_outlier != TRUE, is.na(!!sym(exclusion_var)))
+      }
+        else {
+          dplyr::filter(., is.na(!!sym(exclusion_var)))
+        }
+      } # https://stackoverflow.com/questions/47624161/use-filter-in-dplyr-conditional-on-an-if-statement-in-r
     
     # Summarise
     z <- y %>%
@@ -64,11 +68,9 @@ comparative_prep <- function(ct, settings) {
   
   # Export summaries
   summary_rbind <- rbindlist(summary)
-  wb = loadWorkbook(file.path(out.dir, "qpcr.xlsx"))
-  removeSheet(wb, sheetName = "summary")
-  saveWorkbook(wb, file.path(out.dir, "qpcr.xlsx"))
-  rm(wb)
-  write.xlsx(summary_rbind, file = file.path(out.dir, "qpcr.xlsx"),
+  rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+                 sheetname = "summary")
+  write.xlsx(summary_rbind, file = file.path(out_dir, "qpcr.xlsx"),
              sheetName = "summary", append = T, row.names = F)
   
   
@@ -96,7 +98,7 @@ comparative_prep <- function(ct, settings) {
         pull(!!sym(unique_id))
     )
     
-  } else if (calibration_method == "Callibrator sample/s") {
+  } else if (calibration_method == "Callibrator samples") {
     
     calibrators <- as.character(
       settings %>%
@@ -120,7 +122,7 @@ comparative_prep <- function(ct, settings) {
         slice(1) %>%
         pull(!!sym(unique_id)))
     
-  } else if (calibration_method == "Select sample/s") {
+  } else if (calibration_method == "Select samples") {
     
     calibrators <- calibrator_samples
     
@@ -136,7 +138,7 @@ comparative_prep <- function(ct, settings) {
   # Find bad hk genes
   bad_hk <- as.character(
     rbindlist(summary) %>%
-      select(-c(total, outliers, exclusions, included, sd)) %>%
+      select(-c(total, tech_outliers, exclusions, included, sd)) %>%
       filter(target %in% hk,
              !!sym(unique_id) %notin% empty_samples,
              is.na(ct)) %>%
@@ -149,7 +151,7 @@ comparative_prep <- function(ct, settings) {
   
   # Target summary
   targets <- rbindlist(summary) %>%
-    select(-c(total, outliers, exclusions, included, sd)) %>%
+    select(-c(total, tech_outliers, exclusions, included, sd)) %>%
     dplyr::mutate(sample_type = ifelse(!!sym(unique_id) %in% empty_samples, "nc", "sample")) %>%
     group_by(target, sample_type) %>%
     dplyr::summarise(worked = sum(!is.na(ct)),
@@ -161,11 +163,9 @@ comparative_prep <- function(ct, settings) {
     relocate(c(goi, hk), .after = "target")
     
   # Export target summary
-  wb = loadWorkbook(file.path(out.dir, "qpcr.xlsx"))
-  removeSheet(wb, sheetName = "targets")
-  saveWorkbook(wb, file.path(out.dir, "qpcr.xlsx"))
-  rm(wb)
-  write.xlsx(as.data.frame(targets), file = file.path(out.dir, "qpcr.xlsx"),
+  rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+                 sheetname = "targets")
+  write.xlsx(as.data.frame(targets), file = file.path(out_dir, "qpcr.xlsx"),
              sheetName = "targets", append = T, row.names = F)
   
   # Output
@@ -176,7 +176,6 @@ comparative_prep <- function(ct, settings) {
               targets = targets))
   
 }
-    
   
 
 

@@ -7,10 +7,10 @@ twoddct <- function(summary) {
   
   # Calculate control GEOmean ct for each SAMPLE
   # THE CLASSIC METHOD REQUIRES ONLY 1 HK GENE IS USED, BUT THIS IS A BODGE TO ALLOW >1 HK GENE
-  if(exclude_failed_hk == "Yes") {
+  if(exclude_failed_hk) {
     
     geomean_hk <- rbindlist(summary) %>%
-      select(-c(total, outliers, exclusions, included, sd)) %>%
+      select(-c(total, tech_outliers, exclusions, included, sd)) %>%
       filter(target %in% good_hk,
              !!sym(unique_id) %notin% empty_samples) %>%
       group_by(!!sym(unique_id)) %>%
@@ -20,7 +20,7 @@ twoddct <- function(summary) {
   } else {
     
     geomean_hk <- rbindlist(summary) %>%
-      select(-c(total, outliers, exclusions, included, sd)) %>%
+      select(-c(total, tech_outliers, exclusions, included, sd)) %>%
       filter(target %in% hk,
              !!sym(unique_id) %notin% empty_samples) %>%
       group_by(!!sym(unique_id)) %>%
@@ -33,6 +33,9 @@ twoddct <- function(summary) {
   # 2^-ddct calculations
   comparative_ct <- lapply(summary[names(summary) %in% goi], function(x) {
     
+    # # Manual
+    # x = summary[names(summary) %in% goi][[2]]
+    
     # Extract target
     t <- as.character(
       x %>%
@@ -42,7 +45,7 @@ twoddct <- function(summary) {
     
     # Extract summary and calculate dct
     y <- x %>%
-      select(-c(total, outliers, exclusions, included, sd)) %>%
+      select(-c(total, tech_outliers, exclusions, included, sd)) %>%
       left_join(geomean_hk, by = unique_id) %>%
       dplyr::mutate(dct = ct - geomean_hk) %>%
       dplyr::mutate(analysis_method = analysis_method,
@@ -71,7 +74,7 @@ twoddct <- function(summary) {
   
   
   # rbind comparative ct calculations
-  comparative_ct <- rbindlist(comparative_ct)
+  comparative_ct <- rbindlist(comparative_ct, fill = TRUE)
   
   # Output
   return(comparative_ct)

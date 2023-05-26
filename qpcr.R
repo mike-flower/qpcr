@@ -19,14 +19,22 @@ extract_sublist <- function(x, sub) {
 }
 
 # Directory popup
-choose_directory = function(caption = 'Select directory') {
+choose_directory = function(caption = "Select directory",
+                            default = "") {
   if (exists('utils::choose.dir')) {
-    choose.dir(caption = caption) 
+    choose.dir(caption = caption, default = default) 
   } else {
-    tk_choose.dir(caption = caption)
+    tk_choose.dir(caption = caption, default = default)
   }
 }
 
+# Remove excel sheet
+rm_excel_sheet <- function(file, sheetname) {
+  wb = loadWorkbook(file)
+  removeSheet(wb, sheetName = sheetname)
+  saveWorkbook(wb, file)
+  rm(wb)
+}
 
 
 
@@ -43,6 +51,7 @@ packages <- c("readxl", "ggplot2", "dplyr", "tidyr", "timevis", "tidyverse",
 install.packages(setdiff(packages, rownames(installed.packages())))
 lapply(packages, library, character.only = TRUE)
 rm(packages)
+
 
 
 
@@ -67,8 +76,6 @@ rm(datafiles)
 
 
 
-
-
 #===============================================================================
 # Import settings
 #===============================================================================
@@ -80,24 +87,22 @@ settingsfiles <- tk_choose.files(caption = "Select settings file/s",
 names(settingsfiles) <- basename(settingsfiles)
 
 settings <- lapply(settingsfiles, function(x) {
-  y <- read_excel(x) %>%
-    mutate(row = substr(well, 1, 1),
-           col = as.numeric(sub(".", "", well))) %>%
-    mutate(well_short = paste0(row, col))  %>%
-    dplyr::rename(well_long = well) %>%
-    relocate(filename, well_long, well_short, row, col)
+  y <- read_excel(x) # %>%
+    # mutate(row = substr(well, 1, 1),
+           # col = as.numeric(sub(".", "", well))) %>%
+    # mutate(well_short = paste0(row, col))  %>%
+    # dplyr::rename(well_long = well) %>%
+    # relocate(filename, well_long, well_short, row, col)
   return(y)
 })
 settings <- as.data.frame(data.table::rbindlist(settings))
-rm(settingsfiles)
-
-
+# rm(settingsfiles)
 
 
 
 
 #===============================================================================
-# Variables common to all analyses
+# Variables common to all analyses that require input
 #===============================================================================
 # Analysis method
 analysis_method = tk_select.list(choices = c("Comparative ct (multiple housekeepers)",
@@ -109,62 +114,238 @@ analysis_method = tk_select.list(choices = c("Comparative ct (multiple housekeep
                                        The 'Multiple housekeepers' method uses the formula '2^dctGOI / geomean(2^dctREFS)'.\n
                                        The '2^-ddct' formula has been bodged to handle multiple hk targets too."))
 
-
-# Unique ID
-unique_id = tk_select.list(choices = names(settings),
-                           multiple = FALSE,
-                           title = "Select unique sample identifier column")
-
-# Unique ID label
-unique_id_label = dlgInput(message = "Enter unique ID label",
-                           default = unique_id)$res
+# Output directory
+out_dir = choose_directory(caption = "Select output folder",
+                           default = dirname(settingsfiles)[[1]])
 
 
-# Target source
-target_source <- tk_select.list(choices = c("qPCR data file", "Settings file"),
-                                preselect = "qPCR data file",
-                                multiple = FALSE,
-                                title = "Select source to take target (gene) information from")
 
+#===============================================================================
+# Grouping variables
+#===============================================================================
+# Number of grouping variables
+group_n <- tk_select.list(choices = c(NA, as.character(seq(3))),
+                          preselect = NA,
+                          multiple = FALSE,
+                          title = "Select number of grouping variables")
+
+# Remove pre-existing grouping vector
+# rm(grouping_vector)
+rm(grouping_table)
+
+# Create named vector of grouping variables (if no groupings selected, do stats on the unique sample IDs)
+if (is.na(group_n)) {
+  
+  # grouping_vector <- setNames(unique_id, unique_id_label)
+  grouping_table <- data.frame(var = unique_id,
+                               label = unique_id_label,
+                               loc = "x-axis")
+  
+} else {
+  
+  # Define locations vector
+  locations <- c("x-axis", "facet rows", "facet columns")
+  
+  for (n in seq(as.numeric(group_n))) {
+    
+    # Select column
+    var <- tk_select.list(choices = names(settings),
+                          multiple = FALSE,
+                          title = paste0("Select grouping variable ", n))
+                          # , "\n
+                          #              1 = x-axis, 2 = facet rows, 3 = facet columns"))
+    
+    # Create label
+    label = dlgInput(message = paste0("Enter label for grouping variable ", n),
+                     # default = str_to_sentence(var))$res
+                     default = var)$res
+    
+    if (group_n > 1) {
+    
+      # Allocate plot location
+      loc <- tk_select.list(choices = locations,
+                            multiple = FALSE,
+                            title = paste0("Select plot location for grouping variable ", n))
+      
+      # Remove selected option from locations vector
+      locations <- locations[locations %notin% loc]
+      
+    } else {
+      loc = "x-axis"
+    }
+    
+    # # Make vector
+    # vec <- setNames(var, label)
+    
+    # Make table
+    tab <- data.frame(var = var,
+                      label = label,
+                      loc = loc)
+    
+    # # Add to the grouping vector
+    # if (exists("grouping_vector")) {
+    #   grouping_vector <- c(grouping_vector, vec)
+    # } else {
+    #   grouping_vector <- vec
+    # }
+    
+    # Add to the grouping_table
+    if (exists("grouping_table")) {
+      grouping_table <- rbind(grouping_table, tab)
+    } else {
+      grouping_table <- tab
+    }
+    
+  }
+  
+}
+
+# grouping_vector
+grouping_table
+
+
+
+
+#===============================================================================
+# Variables common to all analyses that can be set by DEFAULT
+#===============================================================================
+# Use default variables?
+default <- tk_select.list(choices = c("Yes", "No"),
+                          preselect = "No",
+                          multiple = FALSE,
+                          title = "Use default variables?\n
+                          Unique sample ID = sample_id
+                          Unique sample label = Sample ID
+                          Target source = Settings file
+                          Outlier threshold = 1.5
+                          Remove outliers = Yes
+                          Exclusion column = exclude
+                          Hide non-significant p-values on plots = Yes
+                          PDF dimensions = 10:13
+                          Internal positive control target = NA
+                          Plot dependent variable log scale = No\n
+                          Comparative Ct variables:
+                          Calibrator column = calibrator
+                          Exclude HK if doesn't work for all samples = Yes\n
+                          Standard curve variables:
+                          Standard concentration column = standard_conc_ngul
+                          Concentration unit = ng/µL
+                          Sample volume column = vol_ul
+                          Quantifiler experiment = No")
+default <- ifelse(default == "Yes", TRUE, FALSE)
+
+
+# Set variables
+if (default) {
+  
+  unique_id = "sample_id"
+  unique_id_label = "Sample ID"
+  target_source = "Settings file"
+  outlier_threshold = 1.5
+  remove_outliers = TRUE
+  exclusion_var = "exclude"
+  hide_ns = TRUE
+  y_log = FALSE
+  pdf_height = 10
+  pdf_width = 13
+  
+} else {
+
+  # Unique ID
+  unique_id = tk_select.list(choices = names(settings),
+                             preselect = "sample_id",
+                             multiple = FALSE,
+                             title = "Select unique sample identifier column")
+  
+  # Unique ID label
+  unique_id_label = dlgInput(message = "Enter unique ID label",
+                             default = unique_id)$res
+  
+  
+  # Target source
+  target_source <- tk_select.list(choices = c("qPCR data file", "Settings file"),
+                                  preselect = "Settings file",
+                                  multiple = FALSE,
+                                  title = "Select source to take target (gene) information from")
+  
+  # Tech rep outliers
+  outlier_threshold = as.numeric(dlgInput(message = "Enter outlier threshold
+                                        [abs(value - median(value)) > threshold * sd]",
+                                          default = 1.5)$res)
+  
+  remove_outliers = tk_select.list(choices = c("Yes", "No"),
+                                   preselect = "Yes",
+                                   multiple = FALSE,
+                                   title = "Remove outlier technical replicates from analysis?")
+  remove_outliers <- ifelse(remove_outliers == "Yes", TRUE, FALSE)
+  
+  
+  # Exclusions
+  exclusion_var = tk_select.list(choices = c(NA, names(settings)),
+                                 preselect = "exclude",
+                                 multiple = FALSE,
+                                 title = "Select column of excluded samples (NA if no exclusion column)")
+  
+  # Hide non-signficant p values?
+  hide_ns <- tk_select.list(choices = c("Yes", "No"),
+                            preselect = "Yes",
+                            multiple = FALSE,
+                            title = "Hide non-significant p-values on statistics plots?")
+  hide_ns <- ifelse(hide_ns == "Yes", TRUE, FALSE)
+  
+  # Log scale y-axis
+  y_log <- tk_select.list(choices = c("Yes", "No"),
+                          preselect = "No",
+                          multiple = FALSE,
+                          title = "Log scale the dependent variable on plots (y-axis)?")
+  y_log <- ifelse(y_log == "Yes", TRUE, FALSE)
+  
+  # PDF dimensions
+  pdf_dimensions <- dlgInput(message = "Enter PDF dimensions (height:width)",
+                             default = "10:13")$res
+  
+  pdf_height <- as.numeric(sub("\\:.*", "", pdf_dimensions))
+  pdf_width <- as.numeric(sub(".*\\:", "", pdf_dimensions))
+  
+}
+
+
+
+
+
+#===============================================================================
+# Add a sample label for plots that captures unique_id and all groups
+#===============================================================================
+settings <- settings %>%
+  # unite("label", c(unique_id, unname(grouping_vector)), remove = FALSE, sep = " / ") %>%
+  unite("label", c(unique_id, grouping_table$var), remove = FALSE, sep = " / ") %>%
+  relocate(label, .before = unique_id)
+
+
+
+#===============================================================================
+# Decide how to handle failed samples in housekeeping genes
+#===============================================================================
+# # Create data label
+# options <- settings %>%
+#   unite("option", c(unique_id, unname(grouping_vector)), remove = FALSE, sep = " - ") %>%
+#   distinct(across(all_of(c(unique_id, unname(grouping_vector), "option"))))
 
 # NC samples (used to exclude HK genes if they fail in a real sample)
-empty_samples = tk_select.list(choices = c(NA,
-                                           unique(settings[[unique_id]])[!is.na(unique(settings[[unique_id]]))]),
-                               preselect = NA,
+empty_samples = tk_select.list(choices = unique(settings$label),
                                multiple = TRUE,
                                title = "Select empty sample/s\n
-                              (samples you expect to be empty.\n
-                              Used to exclude housekeeping genes if amplification fails in a real sample)")
+                              Samples you expect NOT to amplify.
+                              Conversely this is used to identify samples you expect to work
+                              so that housekeeping genes can be excluded if a real sample fails")
 
+if (identical(empty_samples, character(0))) {
+  empty_samples <- NA
+}
 
-# Outlier threshold
-outlier_threshold = as.numeric(dlgInput(message = "Enter outlier threshold\n
-                                        [abs(value - median(value)) > threshold * sd]",
-                                        default = 1.5)$res)
+empty_samples <- settings$sample_id[match(empty_samples, settings$label)]
+# empty_samples <- options$sample_id[match(empty_samples, options$option)]
 
-# Remove outliers
-remove_outliers = tk_select.list(choices = c("Yes", "No"),
-                                 preselect = "Yes",
-                                 multiple = FALSE,
-                                 title = "Remove outliers from analysis?")
-
-
-# Exclusions
-exclusion_var = tk_select.list(choices = c(NA, names(settings)),
-                               preselect = NA,
-                               multiple = FALSE,
-                               title = "Select column of excluded wells (NA if no exclusion column)")
-exclusion_var <- if(is.na(exclusion_var)) {"."} else {exclusion_var}
-
-# PDF attributes
-pdf_height = as.numeric(dlgInput(message = "Enter PDF height",
-                                        default = 10)$res)
-
-pdf_width = as.numeric(dlgInput(message = "Enter PDF width",
-                                 default = 13)$res)
-
-# Output directory
-out.dir = choose_directory(caption = "Select output folder")
 
 
 
@@ -173,46 +354,58 @@ out.dir = choose_directory(caption = "Select output folder")
 #===============================================================================
 if (grepl("Comparative", analysis_method, fixed = TRUE)) {
   
-  # Calibrator samples
+  # Default method of calibrator selection
   calibration_method = tk_select.list(choices = c("Default",
-                                                  "Callibrator sample/s",
+                                                  "Calibrator samples",
                                                   "Lowest GOI ct",
                                                   "Highest GOI ct",
-                                                  "Select sample/s"),
+                                                  "Select samples"),
                                       preselect = "Default",
                                       multiple = FALSE,
                                       title = paste0("Choose a method to select calibrator samples \n
-                                                  (Default uses mean Ct of callibrator sample/s from Settings file, or if not available then the Ct of the sample with lowest gene of interest Ct)"))
+                                                  (Default uses mean Ct of callibrator samples as specified in the Settings file,
+                                                     or if not available then the Ct of the sample with lowest gene of interest Ct)"))
   
   if(calibration_method == "Default" |
-     calibration_method == "Callibrator sample/s") {
+     calibration_method == "Calibrator samples") {
     
-    calibrator_var = tk_select.list(choices = c(NA, names(settings)),
-                                    preselect = NA,
-                                    multiple = FALSE,
-                                    title = "Select calibrator sample column")
     
-  } else { calibrator_var = "" }
+    if (default) {
+      calibrator_var = "calibrator"
+    } else {
+      calibrator_var = tk_select.list(choices = names(settings),
+                                      preselect = "calibrator",
+                                      multiple = FALSE,
+                                      title = "Select calibrator sample column")
+    }
+  } else { calibrator_var = NA }
   
   
-  if(calibration_method == "Select sample/s") {
+  
+  
+  # Select calibrator samples
+  if(calibration_method == "Select samples") {
     
-    calibrator_samples = tk_select.list(choices = unique(settings[[unique_id]]),
+    calibrator_samples = tk_select.list(choices = options$option,
                                         multiple = TRUE,
-                                        title = "Select calibrator sample/s")
+                                        title = "Select calibrator samples")
+    calibrator_samples <- options$sample_id[match(calibrator_samples, options$option)]
     
   } else { calibrator_samples = NA }
   
   
-  # Exclude a housekeeping targets if they don't work for all samples
-  exclude_failed_hk = tk_select.list(choices = c("Yes", "No"),
-                                     preselect = "Yes",
-                                     multiple = FALSE,
-                                     title = "Exclude housekeeping targets (genes) if they don't work for all samples")
+  # Exclude a housekeeping target if it doesn't work for all samples
+  if (default) {
+    exclude_failed_hk <- TRUE
+  } else {
+    exclude_failed_hk = tk_select.list(choices = c("Yes", "No"),
+                                       preselect = "Yes",
+                                       multiple = FALSE,
+                                       title = "Exclude housekeeping targets (genes) if they don't work for all samples")
+    exclude_failed_hk <- ifelse(exclude_failed_hk == "Yes", TRUE, FALSE)
+  }
   
 }
-
-
 
 
 
@@ -223,91 +416,39 @@ if (grepl("Comparative", analysis_method, fixed = TRUE)) {
 #===============================================================================
 if (analysis_method == "Standard curve") {
   
-  # Standards
-  standard_var = tk_select.list(choices = names(settings),
-                                multiple = FALSE,
-                                title = "Select standard concentration column")
-  
-  # Standard concentrations
-  conc_unit <- dlgInput(message = "Enter concentration unit",
-                        default = "ng/µL")$res
-  
-  # Source volume
-  vol_var = tk_select.list(choices = names(settings),
-                           multiple = FALSE,
-                           title = "Select sample volume column")
-  
-  # Is this a quantifiler experiment?
-  quantifiler = tk_select.list(choices = c("Yes", "No"),
-                               preselect = "No",
-                               multiple = FALSE,
-                               title = "Quantifiler experiment?")
-  
-  # Log scale y-axis
-  y_log <- tk_select.list(choices = c("Yes", "No"),
-                          preselect = "No",
-                          multiple = FALSE,
-                          title = "Log scale the dependent variable on plots (y-axis)?")
-  
-} else { y_log <- "No" }
-
-
-
-
-
-#===============================================================================
-# Stats variables
-#===============================================================================
-# Number of grouping variables
-group_n <- tk_select.list(choices = c(NA, as.character(seq(3))),
-                          preselect = NA,
-                          multiple = FALSE,
-                          title = "Select number of grouping variables")
-
-# Remove pre-existing grouping vector
-rm(grouping_vector)
-
-# Create named vector of grouping variables (if no groupings selected, do stats on the unique sample IDs)
-if (is.na(group_n)) {
-  
-  grouping_vector <- setNames(unique_id, unique_id_label)
-  
-} else {
-  
-  for (n in seq(as.numeric(group_n))) {
+  if (default) {
     
-    # Select column
-    var <- tk_select.list(choices = names(settings),
-                          multiple = FALSE,
-                          title = paste0("Select grouping variable ", n, "\n
-                                       1 = x-axis, 2 = facet rows, 3 = facet columns"))
+    standard_var = "standard_conc_ngul"
+    conc_unit = "ng/µL"
+    vol_var = "vol_ul"
+    quantifiler = FALSE
     
-    # Create label
-    label = dlgInput(message = paste0("Enter label for grouping variable ", n),
-                     default = var)$res
+  } else {
     
-    # Make vector
-    vec <- setNames(var, label)
+    # Standards
+    standard_var = tk_select.list(choices = names(settings),
+                                  multiple = FALSE,
+                                  title = "Select standard concentration column")
     
-    # Add to the grouping vector
-    if (exists("grouping_vector")) {
-      grouping_vector <- c(grouping_vector, vec)
-    } else {
-      grouping_vector <- vec
-    }
+    # Standard concentrations
+    conc_unit <- dlgInput(message = "Enter concentration unit",
+                          default = "ng/µL")$res
+    
+    # Source volume
+    vol_var = tk_select.list(choices = names(settings),
+                             multiple = FALSE,
+                             title = "Select sample volume column")
+    
+    # Is this a quantifiler experiment?
+    quantifiler = tk_select.list(choices = c("Yes", "No"),
+                                 preselect = "No",
+                                 multiple = FALSE,
+                                 title = "Quantifiler experiment?")
+    quantifiler <- ifelse(quantifiler == "Yes", TRUE, FALSE)
     
   }
-  
 }
 
-grouping_vector
-
-# Hide non-signficant p values?
-hide_ns <- tk_select.list(choices = c("Yes", "No"),
-                          preselect = "Yes",
-                          multiple = FALSE,
-                          title = "Hide non-significant p-values on statistics plots?")
-hide_ns <- ifelse(hide_ns == "Yes", TRUE, FALSE)
 
 
 
@@ -316,9 +457,8 @@ hide_ns <- ifelse(hide_ns == "Yes", TRUE, FALSE)
 #===============================================================================
 # Open a pdf
 #===============================================================================
-pdf(file.path(out.dir, "qpcr.pdf"),
+pdf(file.path(out_dir, "qpcr.pdf"),
     height = pdf_height, width = pdf_width, onefile = T)
-
 
 
 
@@ -352,6 +492,7 @@ well_short_vars <- c("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10"
                      "F11", "F12", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", 
                      "G9", "G10", "G11", "G12", "H1", "H2", "H3", "H4", "H5", "H6", 
                      "H7", "H8", "H9", "H10", "H11", "H12")
+
 
 # Extract header metrics and ct data
 qpcr_data <- lapply(setNames(names(qpcr_import), names(qpcr_import)), function(n) {
@@ -388,7 +529,7 @@ qpcr_data <- lapply(setNames(names(qpcr_import), names(qpcr_import)), function(n
   data_start = which(q[,1] == "Well")
   ct <- q[data_start:nrow(q),] %>%
     row_to_names(row_number = 1) %>%
-    janitor::clean_names() 
+    janitor::clean_names()
   
   # If data is from the cloud, convert cq to ct
   names(ct) <- gsub("cq", "ct", names(ct))
@@ -400,36 +541,36 @@ qpcr_data <- lapply(setNames(names(qpcr_import), names(qpcr_import)), function(n
     dplyr::mutate(across(c("ct"), ~as.numeric(.))) %>%
     dplyr::rename(well_n = well,
                   well_short = well_position) %>%
-    filter(well_short %in% well_short_vars)
-  
+    filter(well_short %in% well_short_vars) %>%
+    dplyr::mutate(row = substr(well_short, 1, 1),
+                  col = as.numeric(sub(".", "", well_short))) %>%
+    dplyr::mutate(well = paste0(row, str_pad(col, 2, pad = "0"))) %>%
+    relocate(c(well, well_short, well_n, row, col), .after = "filename")
+    
   # Output
   return(list(headers = headers,
               ct = ct))
   
 })
 
+
 # Consolidate data from different plates
 headers <- rbind.fill(lapply(qpcr_data, extract_sublist, sub = "headers"))
 ct <- rbind.fill(lapply(qpcr_data, extract_sublist, sub = "ct"))
 
-
 # Export header information
-unlink(file.path(out.dir, "qpcr.xlsx"))
+unlink(file.path(out_dir, "qpcr.xlsx"))
 write.xlsx(headers,
-           file = file.path(out.dir, "qpcr.xlsx"),
+           file = file.path(out_dir, "qpcr.xlsx"),
            sheetName = "headers", append = T, row.names = F)
 
 
 # Export raw ct data
-wb = loadWorkbook(file.path(out.dir, "qpcr.xlsx"))
-removeSheet(wb, sheetName = "ct")
-saveWorkbook(wb, file.path(out.dir, "qpcr.xlsx"))
-rm(wb)
+rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+               sheetname = "ct")
 write.xlsx(as.data.frame(ct),
-           file = file.path(out.dir, "qpcr.xlsx"),
+           file = file.path(out_dir, "qpcr.xlsx"),
            sheetName = "ct", append = T, row.names = F)
-
-
 
 
 
@@ -445,23 +586,22 @@ if (target_source == "qPCR data file") {
 } else if (target_source == "Settings file") {
   
   target_map <- settings %>%
-    select(filename, well_short, starts_with(c("reporter", "target"))) %>%
-    pivot_longer(cols = -c(filename, well_short),
+    select(filename, well, starts_with(c("reporter", "target"))) %>%
+    pivot_longer(cols = -c(filename, well),
                  names_pattern = "(.*)\\d$",
                  names_to = ".value") %>%
     filter(complete.cases(.)) # https://stackoverflow.com/questions/75465900/using-pivot-longer-on-two-sets-of-columns/75465941#75465941
   
   ct <- ct %>%
-    select(filename, well_short, reporter, ct) %>%
+    select(filename, well, reporter, ct) %>%
     left_join(target_map,
-              by = c("filename", "well_short", "reporter")) %>%
+              by = c("filename", "well", "reporter")) %>%
     relocate(target, .after = "reporter")
   
 }
 
 # Make target names machine friendly (for later t-testing)
 ct$target <- gsub(" ", "_", ct$target)
-
 
 
 
@@ -476,8 +616,8 @@ if (grepl("Comparative", analysis_method, fixed = TRUE)) {
   # Select gene/s of interest
   goi <- tk_select.list(choices = unique(ct$target)[!is.na(unique(ct$target))],
                         multiple = TRUE,
-                        title = "Select target/s of interest")
-  goi <- goi[order(match(goi, unique(ct$target)))] 
+                        title = "Select targets of interest")
+  goi <- goi[order(match(goi, unique(ct$target)))]
   
   # Select housekeeping genes
   hk <- tk_select.list(choices = unique(ct$target)[!is.na(unique(ct$target))],
@@ -490,16 +630,20 @@ if (grepl("Comparative", analysis_method, fixed = TRUE)) {
 
 
 # IPC target
-ipc <- tk_select.list(choices = c(NA, unique(ct$target)[!is.na(unique(ct$target))]),
-                      preselect = "NA",
-                      multiple = FALSE,
-                      title = "Select internal positive control (IPC) target\n
+if (default) {
+  ipc = NA
+} else {
+  ipc <- tk_select.list(choices = c(NA, unique(ct$target)[!is.na(unique(ct$target))]),
+                        preselect = "NA",
+                        multiple = FALSE,
+                        title = "Select internal positive control (IPC) target\n
                       (included in PCR mix for accuracy of pipetting)")
+}
 
 
 # Standard curve target variables
 if (analysis_method == "Standard curve" &&
-    quantifiler == "Yes") {
+    quantifiler) {
   
   quality_numerator <- tk_select.list(choices = c(NA, unique(ct$target)[!is.na(unique(ct$target))]),
                                       preselect = "NA",
@@ -517,7 +661,6 @@ if (analysis_method == "Standard curve" &&
 
 
 
-
 #===============================================================================
 # Annotate ct data with settings information
 #===============================================================================
@@ -530,13 +673,39 @@ levels_id <- unique(settings[[unique_id]])
 # Annotate with settings data and set variable levels
 ct <- ct %>%
   left_join(settings %>%
-              select(-c(well_long, row, col),
-                     -starts_with(c("reporter", "target"))),
-            by = c("filename", "well_short")) %>%
+              select(-starts_with(c("reporter", "target"))),
+            by = c("filename", "well")) %>%
   relocate(c(reporter, target, ct), .after = last_col()) %>%
   dplyr::mutate(target = factor(target, levels = levels_target),
                 !!sym(unique_id) := factor(!!sym(unique_id), levels = levels_id)) %>%
   droplevels()
+
+
+
+
+
+#===============================================================================
+# qPCR development save point
+#===============================================================================
+# # Save data
+# save(list = ls(),
+#      file = file.path(out_dir, "qpcr_dev.RData"))
+
+# # Load data
+# lnames = load(file = "./demo_data/standard_curve/marisa_quantifiler/results/qpcr_dev.RData")
+# lnames
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -548,7 +717,7 @@ print(
   ggplot(ct, aes(x = target, y = ct)) +
     geom_violin(trim = TRUE) +
     geom_boxplot(outlier.shape = NA, width = 0.1) +
-    geom_jitter(aes(colour = !!sym(unique_id)), width = 0.1,height = 0, size = 3) +
+    geom_jitter(aes(colour = label), width = 0.1,height = 0, size = 3) +
     stat_summary(fun = mean, colour = "darkred", geom = "point", 
                  shape = 18, size = 4, show.legend = FALSE) + 
     stat_summary(fun = mean, colour = "darkred", geom = "text", show.legend = FALSE, 
@@ -565,11 +734,21 @@ print(
 )
 
 
+
+
 #===============================================================================
 # Plot ct for samples
 #===============================================================================
+# # Add group nomenclature
+# ct_option <- ct %>%
+#   left_join(options %>%
+#               select(!!sym(unique_id), option),
+#             by = unique_id) %>%
+#   relocate(option, .after = "well")
+
+# Plot
 print(
-  ggplot(ct, aes(x = !!sym(unique_id), y = ct)) +
+  ggplot(ct, aes(x = label, y = ct)) +
     geom_violin(trim = TRUE) +
     geom_boxplot(outlier.shape = NA, width = 0.1) +
     geom_jitter(aes(colour = target), width = 0.1,height = 0, size = 3) +
@@ -584,10 +763,9 @@ print(
          colour = "Target") +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"),
           axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
-          # text = element_text(size = 15)
-    )
+          # text = element_text(size = 15),
+          plot.margin = unit(c(5.5, 5.5, 5.5, 50), "pt"))
 )
-
 
 
 
@@ -600,6 +778,7 @@ ct <- split(ct, f = ct$target)
 
 
 
+
 #===============================================================================
 # Find outlier internal positive control (IPC) wells (IF SPECIFIED)
 #===============================================================================
@@ -607,7 +786,7 @@ ct <- split(ct, f = ct$target)
 # Measures accuracy of pipetting master mix
 
 if (!is.na(ipc)) {
-
+  
   # Find IPC outliers
   ipc_outliers <- ct[[ipc]] %>%
     dplyr::mutate(ipc_outlier = abs(ct - median(ct, na.rm = T)) > outlier_threshold * sd(ct, na.rm = T))
@@ -619,7 +798,7 @@ if (!is.na(ipc)) {
       geom_jitter(aes(colour = ipc_outlier), width=0.1, height=0, size = 3) +
       scale_colour_manual(values = c("TRUE" = "red", "FALSE" = "black")) +
       geom_text_repel(data = ipc_outliers %>% filter(ipc_outlier == T),
-                      aes(label = well_short), colour = "red", size = 5) +
+                      aes(label = label), colour = "red", size = 3) +
       labs(title = "IPC outlier wells",
            x = "Target",
            y = "Threshold cycle (ct)",
@@ -629,15 +808,15 @@ if (!is.na(ipc)) {
   
   
   # Export ipc outlier table
-  wb = loadWorkbook(file.path(out.dir, "qpcr.xlsx"))
-  removeSheet(wb, sheetName = "ipc_outlier")
-  saveWorkbook(wb, file.path(out.dir, "qpcr.xlsx"))
-  rm(wb)
+  rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+                 sheetname = "ipc_outliers")
   write.xlsx(as.data.frame(ipc_outliers),
-             file = file.path(out.dir, "qpcr.xlsx"),
+             file = file.path(out_dir, "qpcr.xlsx"),
              sheetName = "ipc_outliers", append = T, row.names = F)
-
+  
 }
+
+
 
 
 
@@ -659,11 +838,11 @@ ct <- lapply(ct, function(x) {
   y <- x %>%
     group_by(!!sym(unique_id)) %>%
     dplyr::mutate(tech_rep = row_number()) %>%
-    dplyr::mutate(outlier = abs(ct - median(ct, na.rm = T)) > outlier_threshold * sd(ct, na.rm = T)) %>%
+    dplyr::mutate(tech_outlier = abs(ct - median(ct, na.rm = T)) > outlier_threshold * sd(ct, na.rm = T)) %>%
     mutate(outlier_threshold = outlier_threshold) %>%
-    relocate(c(tech_rep, outlier_threshold, outlier), .after = ct) %>%
-    mutate(outlier = ifelse(is.na(outlier), FALSE, outlier)) %>%
-    mutate(outlier = factor(outlier, levels = c(TRUE, FALSE))) %>%
+    relocate(c(tech_rep, outlier_threshold, tech_outlier), .after = ct) %>%
+    mutate(tech_outlier = ifelse(is.na(tech_outlier), FALSE, tech_outlier)) %>%
+    mutate(tech_outlier = factor(tech_outlier, levels = c(TRUE, FALSE))) %>%
     ungroup()
   
   # Output
@@ -674,12 +853,10 @@ ct <- lapply(ct, function(x) {
 
 # Export ct data
 ct_export <- rbindlist(ct)
-wb = loadWorkbook(file.path(out.dir, "qpcr.xlsx"))
-removeSheet(wb, sheetName = "outliers")
-saveWorkbook(wb, file.path(out.dir, "qpcr.xlsx"))
-rm(wb)
+rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+               sheetname = "outliers")
 write.xlsx(ct_export,
-           file = file.path(out.dir, "qpcr.xlsx"),
+           file = file.path(out_dir, "qpcr.xlsx"),
            sheetName = "outliers", append = T, row.names = F)
 
 
@@ -695,10 +872,13 @@ plot <- lapply(ct, function(x) {
   
   # Plot
   plot <-
-    ggplot(x, aes(x = !!sym(unique_id), y = ct)) +
+    ggplot(x, aes(x = label, y = ct)) +
     geom_violin(trim = TRUE) +
     geom_boxplot(outlier.shape = NA, width = 0.1) +
-    geom_jitter(aes(fill = outlier), width = 0.1,height = 0, shape = 21, size = 3, alpha = 0.5) +
+    # geom_jitter(aes(fill = tech_outlier), width = 0.1,height = 0, shape = 21, size = 3, alpha = 0.5) +
+    geom_point(aes(fill = tech_outlier),
+               position = position_jitter(seed = 42, width = 0.1, height = 0),
+               shape = 21, size = 3, alpha = 0.5) +
     scale_fill_manual(values = c("TRUE" = "red", "FALSE" = "black")) +
     labs(title = t,
          x = unique_id_label,
@@ -707,7 +887,17 @@ plot <- lapply(ct, function(x) {
     theme(plot.title = element_text(hjust = 0.5, face = "bold"),
           axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
           # text = element_text(size = 15)
-    )
+    ) +
+    ggnewscale::new_scale_color() +
+    geom_point(data = x %>%
+                 dplyr::mutate(!!sym(exclusion_var) := 
+                                 ifelse(is.na(!!sym(exclusion_var)), NA, TRUE)),
+               aes(colour = !!sym(exclusion_var)),
+               position = position_jitter(seed = 42, width = 0.1, height = 0),
+               shape = 21, fill = NA, size = 5, stroke = 2, alpha = 0.75) +
+    scale_colour_manual(values = c("TRUE" = "red"),
+                        na.value = NA) +
+    labs(colour = "Excluded")
   
   # Output
   return(plot)
@@ -717,9 +907,10 @@ plot <- lapply(ct, function(x) {
 # Wrap plots
 print(
   wrap_plots(plot) +
-    plot_annotation(title = "Outliers",
+    plot_annotation(title = "Technical replicate outliers",
                     theme = theme(plot.title = element_text(hjust = 0.5, face = "bold")))
 )
+
 
 
 
@@ -747,34 +938,50 @@ if (analysis_method == "Comparative ct (multiple housekeepers)") {
   comparative_ct <- multiple_hk(summary = summary)
   
   # Export relative expression data
-  wb = loadWorkbook(file.path(out.dir, "qpcr.xlsx"))
-  removeSheet(wb, sheetName = "relative_expression")
-  saveWorkbook(wb, file.path(out.dir, "qpcr.xlsx"))
-  rm(wb)
+  rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+                 sheetname = "relative_expression")
   write.xlsx(as.data.frame(comparative_ct),
-             file = file.path(out.dir, "qpcr.xlsx"),
+             file = file.path(out_dir, "qpcr.xlsx"),
              sheetName = "relative_expression", append = T, row.names = F)
+  
+  # Add group nomenclature
+  comparative_ct <- comparative_ct %>%
+    left_join(settings %>% select(!!sym(unique_id), label) %>% distinct(),
+              by = unique_id) %>%
+    relocate(label, .after = unique_id)
+  
+  # comparative_ct_option <- comparative_ct %>%
+  #   left_join(options %>%
+  #               select(!!sym(unique_id), option),
+  #             by = unique_id) %>%
+  #   relocate(option, .after = unique_id)
+  
   
   # Plot relative expression
   plots <- lapply(setNames(goi, goi), function(g) {
     
     # Bar plot
     plot <-
-      ggplot(comparative_ct, aes(x = !!sym(unique_id), y = !!sym(g))) +
+      ggplot(comparative_ct, aes(x = label, y = !!sym(g))) +
       geom_bar(aes(fill = calibrator), stat = "identity", colour = "black") +
       scale_fill_manual(values = c("TRUE" = "darkgrey", "FALSE" = "blue")) +
       geom_text(aes(label = round(!!sym(g), 2)), vjust=-0.3) +
       geom_hline(yintercept = 1, linetype = "dashed") +
-      scale_y_continuous(expand = expansion(mult = c(NA, 0.1)),
-                         limits = c(0, NA)) +
+      { if (y_log) {
+        scale_y_continuous(trans = "log",
+                           labels = function(x) { round(x, digits = 0) })
+      } else {
+        scale_y_continuous(expand = expansion(mult = c(NA, 0.1)),
+                           limits = c(0, NA))
+      }} +
       labs(title = g,
            x = unique_id_label,
            y = paste0(g, " relative expression"),
            fill = "Calibrator") +
       theme(plot.title = element_text(hjust = 0.5, face = "bold"),
-            axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)
-            # text = element_text(size = 15)
-      )
+            axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+            # text = element_text(size = 15),
+            plot.margin = unit(c(5.5, 5.5, 5.5, 50), "pt"))
     
     # Output
     return(plot)
@@ -800,6 +1007,9 @@ if (analysis_method == "Comparative ct (multiple housekeepers)") {
   dependent_vector <- c("Relative expression" = "relative_expression")
   
 }
+
+
+
 
 
 
@@ -823,18 +1033,32 @@ if (analysis_method == "Comparative ct (2^-ddct)") {
   source("./functions/twoddct.R")
   comparative_ct <- twoddct(summary = summary)
   
+  # Add group nomenclature
+  comparative_ct <- comparative_ct %>%
+    left_join(settings %>% select(!!sym(unique_id), label) %>% distinct(),
+              by = unique_id) %>%
+    relocate(label, .after = unique_id)
+  
   # Plot relative expression
   plots <- lapply(setNames(goi, goi), function(g) {
     
+    # # Manual
+    # g = setNames(goi, goi)[[2]]
+    
     # Bar plot
     plot <-
-      ggplot(comparative_ct, aes(x = !!sym(unique_id), y = !!sym(g))) +
+      ggplot(comparative_ct, aes(x = label, y = !!sym(g))) +
       geom_bar(aes(fill = calibrator), stat = "identity", colour = "black") +
       scale_fill_manual(values = c("TRUE" = "darkgrey", "FALSE" = "blue")) +
       geom_text(aes(label = round(!!sym(g), 2)), vjust=-0.3) +
       geom_hline(yintercept = 1, linetype = "dashed") +
-      scale_y_continuous(expand = expansion(mult = c(NA, 0.1)),
-                         limits = c(0, NA)) +
+      { if (y_log) {
+        scale_y_continuous(trans = "log",
+                           labels = function(x) { round(x, digits = 0) })
+      } else {
+        scale_y_continuous(expand = expansion(mult = c(NA, 0.1)),
+                           limits = c(0, NA))
+      }} +
       labs(title = g,
            x = unique_id_label,
            y = paste0(g, " relative expression"),
@@ -868,6 +1092,9 @@ if (analysis_method == "Comparative ct (2^-ddct)") {
   dependent_vector <- c("Relative expression" = "relative_expression")
   
 }
+
+
+
 
 
 
@@ -903,16 +1130,18 @@ if (analysis_method == "Standard curve") {
 
 
 
+
+
 #===============================================================================
 # qPCR stats
 #===============================================================================
 source("./functions/qpcr_stats.R")
 stats <- qpcr_stats(quantification = quantification,
-                   grouping_vars = grouping_vector,
-                   dependent_vars = dependent_vector,
-                   y_log = y_log,
-                   hide_ns = hide_ns)
-
+                    # grouping_vars = grouping_vector,
+                    grouping_vars = grouping_table,
+                    dependent_vars = dependent_vector,
+                    y_log = y_log,
+                    hide_ns = hide_ns)
 
 
 
@@ -927,11 +1156,10 @@ dev.off()
 #===============================================================================
 # Save data
 save(list = ls(),
-     file = file.path(out.dir, "qpcr.RData"))
+     file = file.path(out_dir, "qpcr.RData"))
 
 # # Load data
-# lnames = load(file = file.path(out.dir, "qpcr.RData"))
+# lnames = load(file = file.path(out_dir, "qpcr.RData"))
 # lnames
-
 
 

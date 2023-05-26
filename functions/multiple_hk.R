@@ -5,11 +5,11 @@
 
 multiple_hk <- function(summary) {
   
-  # Calculate control mean ct for each target
+  # Calculate control mean ct for each target (average ct of calibrator samples)
   control_mean_ct <- lapply(summary, function(x) {
     y <- x %>%
-      filter(!!sym(unique_id) %in% calibrators) %>%
-      summarise(ct = mean(ct, na.rm = TRUE)) %>%
+      dplyr::filter(!!sym(unique_id) %in% calibrators) %>%
+      dplyr::summarise(ct = mean(ct, na.rm = TRUE)) %>%
       pull(ct)
     return(y)
   })
@@ -28,7 +28,7 @@ multiple_hk <- function(summary) {
     
     # Extract summary and calculate 2^dct (relative quantity, RQ)
     y <- x %>%
-      select(-c(total, outliers, exclusions, included, sd)) %>%
+      select(-c(total, tech_outliers, exclusions, included, sd)) %>%
       dplyr::mutate(cmct = control_mean_ct[[t]]) %>%
       dplyr::mutate(dct = cmct - ct) %>%
       dplyr::mutate(twodct = 2 ^ dct) # assumes 100% amplification efficiency, https://toptipbio.com/qpcr-multiple-reference-genes/

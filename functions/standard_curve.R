@@ -38,12 +38,12 @@ standard_curve <- function(ct) {
   # Model each target using all formulae
   models <- lapply(y, function(z) {
     
-    # Extract standards and remove failed and outliers samples
+    # Extract standards and remove failed and outlier samples
     standards <- z %>%
       dplyr::filter(!is.na(!!sym(standard_var)),
                     !!sym(standard_var) > 0,
                     !is.na(ct),
-                    outlier != TRUE)
+                    tech_outlier != TRUE)
     
     models <- lapply(setNames(names(formulae), names(formulae)), function(n) {
       
@@ -140,12 +140,10 @@ standard_curve <- function(ct) {
   r2
   
   # Export r2 table
-  wb = loadWorkbook(file.path(out.dir, "qpcr.xlsx"))
-  removeSheet(wb, sheetName = "r2")
-  saveWorkbook(wb, file.path(out.dir, "qpcr.xlsx"))
-  rm(wb)
+  rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+                 sheetname = "r2")
   write.xlsx(r2,
-             file = file.path(out.dir, "qpcr.xlsx"),
+             file = file.path(out_dir, "qpcr.xlsx"),
              sheetName = "r2", append = T, row.names = F)
   
   
@@ -206,18 +204,21 @@ standard_curve <- function(ct) {
       filter(!is.na(!!sym(standard_var)),
              !!sym(standard_var) > 0,
              !is.na(ct),
-             outlier != TRUE) %>%
+             tech_outlier != TRUE) %>%
       ggplot(aes(x = !!sym(standard_var), y = predict_conc)) +
       geom_point(aes(fill = !!sym(standard_var)),
                  shape = 21, size = 5, alpha = 0.5, colour = "black") +
+      scale_fill_gradient(low = "blue", high = "green",
+                          trans = "log2",
+                          labels = function(x) { round(x, digits = 5) }) +
       geom_text_repel(aes(label = !!sym(standard_var))) +
       stat_smooth(method = lm, formula = y ~ x, fullrange = T) +
       stat_poly_eq(formula = y ~ x,
                    aes(label = paste(after_stat(eq.label), after_stat(rr.label), sep = "~~~")),
                    parse = TRUE, coef.digits = 3, f.digits = 3, p.digits = 3, 
                    rr.digits = 3) +
-      scale_x_continuous(trans='log2') +
-      scale_y_continuous(trans='log2') +
+      scale_x_continuous(trans='log2', labels = function(x) { round(x, digits = 5) }) +
+      scale_y_continuous(trans='log2', labels = function(x) { round(x, digits = 5) }) +
       labs(title = t,
            subtitle = paste0("Predictive model: ", best_model, " [", c(formulae[[best_model]]), "]"),
            x = paste0("Standard concentration (", conc_unit, ")"),
@@ -265,12 +266,10 @@ standard_curve <- function(ct) {
   predict <- rbindlist(y)
   
   # Export
-  wb = loadWorkbook(file.path(out.dir, "qpcr.xlsx"))
-  removeSheet(wb, sheetName = "predict")
-  saveWorkbook(wb, file.path(out.dir, "qpcr.xlsx"))
-  rm(wb)
+  rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+                 sheetname = "predict")
   write.xlsx(predict,
-             file = file.path(out.dir, "qpcr.xlsx"),
+             file = file.path(out_dir, "qpcr.xlsx"),
              sheetName = "predict", append = T, row.names = F)
   
   
@@ -282,26 +281,26 @@ standard_curve <- function(ct) {
   # 1-10. Mild degredation, or PCR inhibition.
   # >10 / NA. Significant degredation
   
-  if (quantifiler == "Yes") {
+  if (quantifiler) {
   
     # Calculate quality index
     quality <- rbindlist(y) %>%
-      select(filename, well_short, !!sym(unique_id), sample_type, outlier, target, predict_conc) %>%
+      select(filename, well, !!sym(unique_id), sample_type, tech_outlier, target, predict_conc) %>%
       pivot_wider(names_from = target,
-                  values_from = c(outlier, predict_conc)) %>%
+                  values_from = c(tech_outlier, predict_conc)) %>%
       dplyr::mutate(quality = !!sym(paste0("predict_conc_", quality_numerator)) / !!sym(paste0("predict_conc_", quality_denominator)))
     
     # Count tech reps, excluding outliers
     quality_n <- quality %>%
-      dplyr::filter(!!sym(paste0("outlier_", quality_numerator)) != TRUE,
-                    !!sym(paste0("outlier_", quality_denominator)) != TRUE) %>%
+      dplyr::filter(!!sym(paste0("tech_outlier_", quality_numerator)) != TRUE,
+                    !!sym(paste0("tech_outlier_", quality_denominator)) != TRUE) %>%
       group_by(!!sym(unique_id)) %>%
       dplyr::summarise(n = n())
     
     # Summarise quality index (excluding outliers)
     quality_summary <- quality %>%
-      dplyr::filter(!!sym(paste0("outlier_", quality_numerator)) != TRUE,
-                    !!sym(paste0("outlier_", quality_denominator)) != TRUE) %>%
+      dplyr::filter(!!sym(paste0("tech_outlier_", quality_numerator)) != TRUE,
+                    !!sym(paste0("tech_outlier_", quality_denominator)) != TRUE) %>%
       group_by(!!sym(unique_id), sample_type) %>%
       dplyr::summarise(quality_mean = mean(quality, na.rm = TRUE),
                        quality_sd = sd(quality, na.rm = TRUE)) %>%
@@ -311,18 +310,19 @@ standard_curve <- function(ct) {
       left_join(quality_n, by = unique_id) %>%
       ungroup() %>%
       mutate(quality_sem = quality_sd / sqrt(n)) %>%
-      relocate(n, .after = !!sym(unique_id))
+      relocate(n, .after = !!sym(unique_id)) %>%
+      left_join(settings %>% select(!!sym(unique_id), label) %>% distinct(),
+                by = unique_id) %>% # add plot label back in
+      relocate(label, .after = unique_id)
     
     # Sort by order in the settings file
     quality_summary <- quality_summary[match(unique(settings[[unique_id]]), quality_summary[[unique_id]]),]  
     
     # Export quality summary
-    wb = loadWorkbook(file.path(out.dir, "qpcr.xlsx"))
-    removeSheet(wb, sheetName = "quality")
-    saveWorkbook(wb, file.path(out.dir, "qpcr.xlsx"))
-    rm(wb)
+    rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+                   sheetname = "quality")
     write.xlsx(as.data.frame(quality_summary),
-               file = file.path(out.dir, "qpcr.xlsx"),
+               file = file.path(out_dir, "qpcr.xlsx"),
                sheetName = "quality", append = T, row.names = F)
     
     
@@ -332,7 +332,7 @@ standard_curve <- function(ct) {
         geom_boxplot(outlier.shape = NA) +
         geom_jitter(width=0.1,height=0, size = 3) +
         geom_label_repel(data = quality_summary %>% top_frac(0.10, quality),
-                         aes(label = !!sym(unique_id)),
+                         aes(label = label),
                          alpha = 0.5) +
         geom_hline(yintercept = c(1, 10), linetype = "dashed", colour = "red") +
         labs(title = "Quality index",
@@ -360,14 +360,14 @@ standard_curve <- function(ct) {
     # Summarise number of reps per unique sample (excluding failed samples and outliers)
     tech_n <- z %>%
       dplyr::filter(!is.na(ct),
-                    outlier != TRUE) %>%
+                    tech_outlier != TRUE) %>%
       group_by(!!sym(unique_id)) %>%
       dplyr::summarise(n = n())
     
     # Summarise data columns for each unique sample
     z <- z %>%
       dplyr::filter(!is.na(ct),
-                    outlier != TRUE) %>%
+                    tech_outlier != TRUE) %>%
       select(filename, !!sym(unique_id), target, ct, sample_type, predict_conc, total_DNA) %>%
       dplyr::mutate(across(c("ct", "predict_conc", "total_DNA"), ~as.numeric(.))) %>%
       group_by(!!sym(unique_id), sample_type) %>%
@@ -405,12 +405,10 @@ standard_curve <- function(ct) {
   summary_rbind <- summary_rbind[match(unique(settings[[unique_id]]), summary_rbind[[unique_id]]),]
   
   # Export
-  wb = loadWorkbook(file.path(out.dir, "qpcr.xlsx"))
-  removeSheet(wb, sheetName = "summary")
-  saveWorkbook(wb, file.path(out.dir, "qpcr.xlsx"))
-  rm(wb)
+  rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+                 sheetname = "summary")
   write.xlsx(as.data.frame(summary_rbind),
-             file = file.path(out.dir, "qpcr.xlsx"),
+             file = file.path(out_dir, "qpcr.xlsx"),
              sheetName = "summary", append = T, row.names = F)
   
   
@@ -429,7 +427,7 @@ standard_curve <- function(ct) {
     
     # Plot
     p <- 
-      ggplot(z, aes(x = !!sym(unique_id), y = predict_conc)) +
+      ggplot(z, aes(x = label, y = predict_conc)) +
       geom_violin(trim = TRUE) +
       geom_boxplot(outlier.shape = NA, width = 0.1) +
       geom_jitter(width=0.1, height=0, size = 3) +
@@ -478,7 +476,11 @@ standard_curve <- function(ct) {
                  shape = 21, size = 3) +
       scale_y_continuous(trans="log2",
                          # expand = expansion(mult = c(NA, 0.2))
-                         labels = function(z) {formatC(z, format = "e", digits = 1)} ) +
+                         # labels = function(z) {formatC(z, format = "e", digits = 1)}
+                         labels = function(x) { 
+                           ifelse(x > 1000,
+                                  formatC(x, format = "e", digits = 1),
+                                  round(x, digits = 5)) }) +
       labs(title = "Concentration",
            x = "Target",
            y = paste0("Concentration (", conc_unit, ")"),
@@ -506,7 +508,7 @@ standard_curve <- function(ct) {
     
     # Plot
     p <- 
-      ggplot(z, aes(x = !!sym(unique_id), y = total_DNA)) +
+      ggplot(z, aes(x = label, y = total_DNA)) +
       geom_violin(trim = TRUE) +
       geom_boxplot(outlier.shape = NA, width = 0.1) +
       geom_jitter(width=0.1, height=0, size = 3) +
@@ -519,7 +521,10 @@ standard_curve <- function(ct) {
                                                  formatC(y, format = "e", digits = 1))))) +
       scale_y_continuous(trans="log2",
                          # expand = expansion(mult = c(NA, 0.2))
-                         labels = function(z) {formatC(z, format = "e", digits = 1)} ) +
+                         labels = function(x) { 
+                           ifelse(x > 1000,
+                                  formatC(x, format = "e", digits = 1),
+                                  round(x, digits = 5)) }) +
       labs(title = t,
            x = unique_id_label,
            y = paste0("DNA yield (",
@@ -557,7 +562,10 @@ standard_curve <- function(ct) {
       geom_jitter(width=0.1, height=0, size = 3) +
       scale_y_continuous(trans="log2",
                          # expand = expansion(mult = c(NA, 0.2))
-                         labels = function(z) {formatC(z, format = "e", digits = 1)} ) +
+                         labels = function(x) { 
+                           ifelse(x > 1000,
+                                  formatC(x, format = "e", digits = 1),
+                                  round(x, digits = 5)) }) +
       labs(title = "DNA yield",
            x = "Target",
            y = paste0("DNA yield (",
