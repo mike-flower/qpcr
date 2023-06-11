@@ -31,44 +31,89 @@ twoddct <- function(summary) {
   
   
   # 2^-ddct calculations
-  comparative_ct <- lapply(summary[names(summary) %in% goi], function(x) {
-    
-    # # Manual
-    # x = summary[names(summary) %in% goi][[2]]
+  comparative_ct <- lapply(summary[names(summary) %in% goi], function(a) {
     
     # Extract target
     t <- as.character(
-      x %>%
+      a %>%
         slice(1) %>%
         pull(target)
     )
     
-    # Extract summary and calculate dct
-    y <- x %>%
-      select(-c(total, tech_outliers, exclusions, included, sd)) %>%
-      left_join(geomean_hk, by = unique_id) %>%
-      dplyr::mutate(dct = ct - geomean_hk) %>%
-      dplyr::mutate(analysis_method = analysis_method,
-                    calibration_method = calibration_method,
-                    calibrator = !!sym(unique_id) %in% calibrators) %>%
-      relocate(all_of(c("analysis_method", "calibration_method", "calibrator")), .after = unique_id) %>%
-      dplyr::mutate(calibrator = factor(calibrator, levels = c(TRUE, FALSE)))
+    # Split into list to calculate by calibrator group
+    b <- a %>%
+      split(f = as.factor(.[[calibrator_group_var]]))
     
+    d <- lapply(b, function(c) {
+      
+      # Unlist calibrators
+      cals <- unlist(calibrators, use.names = FALSE)
+      
+      # Calculate dct
+      d <- c %>%
+        select(-c(total, tech_outliers, exclusions, included, sd)) %>%
+        left_join(geomean_hk, by = unique_id) %>%
+        dplyr::mutate(dct = ct - geomean_hk) %>%
+        dplyr::mutate(analysis_method = analysis_method,
+                      calibration_method = calibration_method,
+                      calibrator = !!sym(unique_id) %in% cals) %>%
+        relocate(all_of(c("analysis_method", "calibration_method", "calibrator")), .after = unique_id) %>%
+        dplyr::mutate(calibrator = factor(calibrator, levels = c(TRUE, FALSE)))
+      
+      # Calculate average dct of calibrator samples
+      dct_control_mean <- d %>%
+        filter(!!sym(unique_id) %in% cals) %>%
+        dplyr::summarise(dct = mean(dct)) %>%
+        pull(dct)
+      dct_control_mean <- ifelse(is.nan(dct_control_mean), NA, dct_control_mean)
+      
+      # Calculate 2^-ddct
+      d <- d %>%
+        dplyr:: mutate(dct_control_mean = dct_control_mean) %>%
+        dplyr::mutate(ddct = dct - dct_control_mean) %>%
+        dplyr::mutate(!!sym(t) := 2 ^ -ddct)
+      
+      # Output
+      return(d)
+        
+    })
     
-    # Calculate average dct of calibrator samples
-    dct_control_mean <- y %>%
-      filter(!!sym(unique_id) %in% calibrators) %>%
-      dplyr::summarise(dct = mean(dct)) %>%
-      pull(dct)
+    # Recombine the list of calibrator groups
+    d <- rbindlist(d)
     
-    # Calculate 2^-ddct
-    z <- y %>%
-      dplyr:: mutate(dct_control_mean = dct_control_mean) %>%
-      dplyr::mutate(ddct = dct - dct_control_mean) %>%
-      dplyr::mutate(!!sym(t) := 2 ^ -ddct)
+    # Put d samples back in their original order
+    d <- d[match(unique(a[[unique_id]]), d[[unique_id]]),]
     
     # Output
-    return(z)
+    return(d)
+    
+    
+    # # Extract summary and calculate dct
+    # y <- x %>%
+    #   select(-c(total, tech_outliers, exclusions, included, sd)) %>%
+    #   left_join(geomean_hk, by = unique_id) %>%
+    #   dplyr::mutate(dct = ct - geomean_hk) %>%
+    #   dplyr::mutate(analysis_method = analysis_method,
+    #                 calibration_method = calibration_method,
+    #                 calibrator = !!sym(unique_id) %in% calibrators) %>%
+    #   relocate(all_of(c("analysis_method", "calibration_method", "calibrator")), .after = unique_id) %>%
+    #   dplyr::mutate(calibrator = factor(calibrator, levels = c(TRUE, FALSE)))
+    # 
+    # 
+    # # Calculate average dct of calibrator samples
+    # dct_control_mean <- y %>%
+    #   filter(!!sym(unique_id) %in% calibrators) %>%
+    #   dplyr::summarise(dct = mean(dct)) %>%
+    #   pull(dct)
+    # 
+    # # Calculate 2^-ddct
+    # z <- y %>%
+    #   dplyr:: mutate(dct_control_mean = dct_control_mean) %>%
+    #   dplyr::mutate(ddct = dct - dct_control_mean) %>%
+    #   dplyr::mutate(!!sym(t) := 2 ^ -ddct)
+    # 
+    # # Output
+    # return(z)
     
   })
   

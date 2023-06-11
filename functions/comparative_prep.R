@@ -55,11 +55,16 @@ comparative_prep <- function(ct, settings) {
       group_by(!!sym(unique_id)) %>%
       dplyr::summarise(included = n())
     
-    # Merge mean, sd and n
+    # Merge mean, sd and n. Add calibrator group back in
     z <- z %>%
       left_join(oe, by = unique_id) %>%
       left_join(n_included, by = unique_id) %>%
-      relocate(c(ct, sd), .after = "included")
+      relocate(c(ct, sd), .after = "included") %>%
+      left_join(x %>%
+                  select(all_of(c(unique_id, calibrator_group_var))) %>%
+                  distinct(),
+                by = unique_id) %>%
+      relocate(!!sym(calibrator_group_var), .after = unique_id)
     
     # Output
     return(z)
@@ -76,6 +81,20 @@ comparative_prep <- function(ct, settings) {
   
   
   #===============================================================================
+  # Ensure a calibrator group is set for every sample
+  #===============================================================================
+  # Required in order to split ct into a list by calibrator group
+  ct <- lapply(ct, function(x) {
+    y <- x %>%
+      dplyr::mutate(!!sym(calibrator_group_var) := 
+                      ifelse(is.na(!!sym(calibrator_group_var)),
+                             "None", !!sym(calibrator_group_var)))
+    return(y)
+  })
+  
+  
+  
+  #===============================================================================
   # Pick calibrator samples
   #===============================================================================
   # Calibrator samples
@@ -83,48 +102,138 @@ comparative_prep <- function(ct, settings) {
      !is.na(calibrator_var) &&
      sum(!is.na(settings[[calibrator_var]])) > 0) {
     
-    calibrators <- as.character(
-      settings %>%
-        filter(!is.na(!!sym(calibrator_var))) %>%
-        distinct(!!sym(unique_id)) %>%
-        pull(!!sym(unique_id)))
+    calibrators <- settings %>%
+      select(all_of(c(unique_id, calibrator_group_var, calibrator_var))) %>%
+      filter(!is.na(!!sym(calibrator_var))) %>%
+      select(-!!sym(calibrator_var)) %>%
+      split(f = as.factor(.[[calibrator_group_var]]))
+    
+    calibrators <- lapply(calibrators, function(x) {
+      y <- as.character(
+        x %>%
+          distinct(!!sym(unique_id)) %>%
+          pull(!!sym(unique_id))
+      )
+      return(y)
+    })
+    
+    # calibrators <- as.character(
+    #   settings %>%
+    #     filter(!is.na(!!sym(calibrator_var))) %>%
+    #     distinct(!!sym(unique_id)) %>%
+    #     pull(!!sym(unique_id)))
     
   } else if (calibration_method == "Default") {
     
-    calibrators <- as.character(
-      rbindlist(summary) %>%
-        slice(which.min(ct)) %>%
-        slice(1) %>%
-        pull(!!sym(unique_id))
-    )
+    calibrators <- rbindlist(summary) %>%
+      split(f = as.factor(.[[calibrator_group_var]]))
     
-  } else if (calibration_method == "Callibrator samples") {
+    calibrators <- lapply(calibrators, function(x) {
+      y <- as.character(
+        x %>%
+          slice(which.min(ct)) %>%
+          slice(1) %>%
+          pull(!!sym(unique_id))
+      )
+    })
     
-    calibrators <- as.character(
-      settings %>%
-        filter(!is.na(!!sym(calibrator_var))) %>%
-        distinct(!!sym(unique_id)) %>%
-        pull(!!sym(unique_id)))
+    # calibrators <- as.character(
+    #   rbindlist(summary) %>%
+    #     slice(which.min(ct)) %>%
+    #     slice(1) %>%
+    #     pull(!!sym(unique_id))
+    # )
+    
+  } else if (calibration_method == "Calibrator samples") {
+    
+    calibrators <- settings %>%
+      select(all_of(c(unique_id, calibrator_group_var, calibrator_var))) %>%
+      filter(!is.na(!!sym(calibrator_var))) %>%
+      select(-!!sym(calibrator_var)) %>%
+      split(f = as.factor(.[[calibrator_group_var]]))
+    
+    calibrators <- lapply(calibrators, function(x) {
+      y <- as.character(
+        x %>%
+          distinct(!!sym(unique_id)) %>%
+          pull(!!sym(unique_id))
+      )
+      return(y)
+    })
+    
+    # calibrators <- as.character(
+    #   settings %>%
+    #     filter(!is.na(!!sym(calibrator_var))) %>%
+    #     distinct(!!sym(unique_id)) %>%
+    #     pull(!!sym(unique_id)))
     
   } else if (calibration_method == "Lowest GOI ct") {
     
-    calibrators <- as.character(
-      rbindlist(summary) %>%
-        slice(which.min(ct)) %>%
-        slice(1) %>%
-        pull(!!sym(unique_id)))
+    calibrators <- rbindlist(summary) %>%
+      split(f = as.factor(.[[calibrator_group_var]]))
+    
+    calibrators <- lapply(calibrators, function(x) {
+      y <- as.character(
+        x %>%
+          slice(which.min(ct)) %>%
+          slice(1) %>%
+          pull(!!sym(unique_id))
+      )
+    })
+    
+    # calibrators <- as.character(
+    #   rbindlist(summary) %>%
+    #     slice(which.min(ct)) %>%
+    #     slice(1) %>%
+    #     pull(!!sym(unique_id)))
     
   } else if (calibration_method == "Highest GOI ct") {
     
-    calibrators <- as.character(
-      rbindlist(summary) %>%
-        slice(which.max(ct)) %>%
-        slice(1) %>%
-        pull(!!sym(unique_id)))
+    calibrators <- rbindlist(summary) %>%
+      split(f = as.factor(.[[calibrator_group_var]]))
+    
+    calibrators <- lapply(calibrators, function(x) {
+      y <- as.character(
+        x %>%
+          slice(which.max(ct)) %>%
+          slice(1) %>%
+          pull(!!sym(unique_id))
+      )
+    })
+    
+    # calibrators <- as.character(
+    #   rbindlist(summary) %>%
+    #     slice(which.max(ct)) %>%
+    #     slice(1) %>%
+    #     pull(!!sym(unique_id)))
     
   } else if (calibration_method == "Select samples") {
     
-    calibrators <- calibrator_samples
+    calibrators <- rbindlist(summary) %>%
+      split(f = as.factor(.[[calibrator_group_var]]))
+    
+    calibrators <- lapply(calibrators, function(x) {
+      
+      # Look for selected calibrator samples in the calibrator group and return a vector of sample_id
+      y <- as.character(
+        x %>%
+          dplyr::mutate(cal = !!sym(unique_id) %in% calibrator_samples) %>%
+          dplyr::filter(cal == TRUE) %>%
+          distinct(!!sym(unique_id)) %>%
+          pull(!!sym(unique_id))
+      )
+      
+      # If none found, set to NA
+      if (identical(y, character(0))) {
+        y <- NA
+      }
+      
+      # Output
+      return(y)
+      
+    })
+    
+    # calibrators <- calibrator_samples
     
   }
   

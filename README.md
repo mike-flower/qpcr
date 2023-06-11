@@ -83,7 +83,8 @@ Download the example settings excel file and complete for your samples (one samp
 - reporter2 ...
 - target1 = the target gene that corresponds to reporter1.
 - target2 ...
-- calibrator = column indicating calibrator samples (any character other than NA indicates a calibrator).
+- calibrator_group = groups to which calibrator samples apply. Blank wells form their own group, and if all are left blank then calibrators will be applied to all samples.
+- calibrator = column indicating calibrator samples (any character other than NA indicates a calibrator). These are used as calibrators for all samples in the same calibrator group.
 - exclude = column indicating which samples to exclude the from the analysis.
 
 
@@ -106,7 +107,7 @@ You will be asked to select qPCR data Excel file/s (you can upload one or multip
 - out.dir = file path to save results.
 
 ### Comparative ct inputs
-- calibration_method = Choose a method to select calibrator samples. Options are 'Default', 'Callibrator sample/s', 'Lowest GOI ct', 'Highest GOI ct', or 'Select sample/s'. Default uses mean Ct of callibrator sample/s from Settings file, or if not available then the Ct of the sample with lowest gene of interest Ct.
+- calibration_method = Choose a method to select calibrator samples. Options are 'Default', 'Calibrator sample/s', 'Lowest GOI ct', 'Highest GOI ct', or 'Select sample/s'. Default uses mean Ct of calibrator sample/s from Settings file, or if not available then the Ct of the sample with lowest gene of interest Ct in each calibrator group.
 - calibrator_var = if you selected 'Default' or 'Calibrator samples', this will prompt you to select the column indicating samples to use as calibrators.
 - exclude_failed_hk = Select whether to exclude housekeeping targets (genes) if they don't work for all samples. This is recommended; if housekeepers are kept despite failing in some samples, then geomean(HK) for those samples will be skewed towards those HK targets that worked.
 

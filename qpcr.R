@@ -225,6 +225,7 @@ default <- tk_select.list(choices = c("Yes", "No"),
                           Internal positive control target = NA
                           Plot dependent variable log scale = No\n
                           Comparative Ct variables:
+                          Calibrator group column = calibrator_group
                           Calibrator column = calibrator
                           Exclude HK if doesn't work for all samples = Yes\n
                           Standard curve variables:
@@ -371,14 +372,24 @@ if (grepl("Comparative", analysis_method, fixed = TRUE)) {
     
     
     if (default) {
+      calibrator_group_var = "calibrator_group"
       calibrator_var = "calibrator"
     } else {
+      
+      calibrator_group_var = tk_select.list(choices = names(settings),
+                                            preselect = "calibrator_group",
+                                            multiple = FALSE,
+                                            title = "Select calibrator group column")
+      
       calibrator_var = tk_select.list(choices = names(settings),
                                       preselect = "calibrator",
                                       multiple = FALSE,
                                       title = "Select calibrator sample column")
     }
-  } else { calibrator_var = NA }
+  } else { 
+    calibrator_group_var = NA
+    calibrator_var = NA 
+    }
   
   
   
@@ -386,10 +397,10 @@ if (grepl("Comparative", analysis_method, fixed = TRUE)) {
   # Select calibrator samples
   if(calibration_method == "Select samples") {
     
-    calibrator_samples = tk_select.list(choices = options$option,
+    calibrator_samples = tk_select.list(choices = unique(settings$label),
                                         multiple = TRUE,
                                         title = "Select calibrator samples")
-    calibrator_samples <- options$sample_id[match(calibrator_samples, options$option)]
+    calibrator_samples <- settings$sample_id[match(calibrator_samples, settings$label)]
     
   } else { calibrator_samples = NA }
   
@@ -692,7 +703,7 @@ ct <- ct %>%
 #      file = file.path(out_dir, "qpcr_dev.RData"))
 
 # # Load data
-# lnames = load(file = "./demo_data/standard_curve/marisa_quantifiler/results/qpcr_dev.RData")
+# lnames = load(file = "/Users/michaelflower/Library/Mobile Documents/com~apple~CloudDocs/Documents/ACL/Research/Projects/HTT ASO/2023.06.07 Allele specific ASO RTqPCR/results/dev/qpcr_dev.RData")
 # lnames
 
 
@@ -729,8 +740,10 @@ print(
          colour = unique_id_label) +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"),
           axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
-          # text = element_text(size = 15)
-    )
+          # text = element_text(size = 15),
+          legend.text = element_text(size = rel(0.5)),
+          legend.key.size = unit(0.25, "cm")) +
+    guides(colour = guide_legend(ncol = 1))
 )
 
 
@@ -836,7 +849,8 @@ ct <- lapply(ct, function(x) {
   
   # Find outliers
   y <- x %>%
-    group_by(!!sym(unique_id)) %>%
+    group_by(!!sym(unique_id), !!sym(exclusion_var)) %>% # so excluded samples don't get considered as tech rep outliers
+    # group_by(!!sym(unique_id)) %>%
     dplyr::mutate(tech_rep = row_number()) %>%
     dplyr::mutate(tech_outlier = abs(ct - median(ct, na.rm = T)) > outlier_threshold * sd(ct, na.rm = T)) %>%
     mutate(outlier_threshold = outlier_threshold) %>%
@@ -880,11 +894,13 @@ plot <- lapply(ct, function(x) {
                position = position_jitter(seed = 42, width = 0.1, height = 0),
                shape = 21, size = 3, alpha = 0.5) +
     scale_fill_manual(values = c("TRUE" = "red", "FALSE" = "black")) +
-    labs(title = t,
+    labs(title = "Outliers and exclusions",
+         subtitle = t,
          x = unique_id_label,
          y = "Threshold cycle (ct)",
-         fill = "Outlier") +
+         fill = "Tech rep outlier") +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+          plot.subtitle = element_text(hjust = 0.5),
           axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
           # text = element_text(size = 15)
     ) +
@@ -904,12 +920,17 @@ plot <- lapply(ct, function(x) {
   
 })
 
-# Wrap plots
-print(
-  wrap_plots(plot) +
-    plot_annotation(title = "Technical replicate outliers",
-                    theme = theme(plot.title = element_text(hjust = 0.5, face = "bold")))
-)
+# # Wrap plots
+# print(
+#   wrap_plots(plot) +
+#     plot_annotation(title = "Technical replicate outliers",
+#                     theme = theme(plot.title = element_text(hjust = 0.5, face = "bold")))
+# )
+
+# Plot
+for (p in plot) {
+  print(p)
+}
 
 
 
@@ -963,8 +984,10 @@ if (analysis_method == "Comparative ct (multiple housekeepers)") {
     # Bar plot
     plot <-
       ggplot(comparative_ct, aes(x = label, y = !!sym(g))) +
-      geom_bar(aes(fill = calibrator), stat = "identity", colour = "black") +
-      scale_fill_manual(values = c("TRUE" = "darkgrey", "FALSE" = "blue")) +
+      geom_bar(aes(fill = !!sym(calibrator_group_var), colour = !!sym(calibrator_var)), 
+               stat = "identity") +
+      # geom_bar(aes(fill = calibrator), stat = "identity", colour = "black") +
+      scale_colour_manual(values = c("TRUE" = "blue", "FALSE" = NA)) +
       geom_text(aes(label = round(!!sym(g), 2)), vjust=-0.3) +
       geom_hline(yintercept = 1, linetype = "dashed") +
       { if (y_log) {
@@ -974,11 +997,13 @@ if (analysis_method == "Comparative ct (multiple housekeepers)") {
         scale_y_continuous(expand = expansion(mult = c(NA, 0.1)),
                            limits = c(0, NA))
       }} +
-      labs(title = g,
+      labs(title = "Relative expression",
+           subtitle = g,
            x = unique_id_label,
            y = paste0(g, " relative expression"),
-           fill = "Calibrator") +
+           fill = "Calibrator group", colour = "Calibrator sample") +
       theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+            plot.subtitle = element_text(hjust = 0.5),
             axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
             # text = element_text(size = 15),
             plot.margin = unit(c(5.5, 5.5, 5.5, 50), "pt"))
@@ -988,12 +1013,17 @@ if (analysis_method == "Comparative ct (multiple housekeepers)") {
     
   })
   
-  # Wrap the plots
-  print(
-    wrap_plots(plots) +
-      plot_annotation(title = "Relative expression",
-                      theme = theme(plot.title = element_text(hjust = 0.5, face = "bold")))
-  )
+  # Plot
+  for (p in plots) {
+    print(p)
+  }
+  
+  # # Wrap the plots
+  # print(
+  #   wrap_plots(plots) +
+  #     plot_annotation(title = "Relative expression",
+  #                     theme = theme(plot.title = element_text(hjust = 0.5, face = "bold")))
+  # )
   
   # Prepare expression level data for stats
   quantification <- comparative_ct %>%
@@ -1002,6 +1032,13 @@ if (analysis_method == "Comparative ct (multiple housekeepers)") {
                  names_to = "target",
                  values_to = "relative_expression") %>%
     split(f = as.factor(.$target))
+  
+  # Export quantification table
+  rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+                 sheetname = "quantification")
+  write.xlsx(rbindlist(quantification),
+             file = file.path(out_dir, "qpcr.xlsx"),
+             sheetName = "quantification", append = T, row.names = F)
   
   # Dependent variables vector for stats
   dependent_vector <- c("Relative expression" = "relative_expression")
@@ -1048,8 +1085,10 @@ if (analysis_method == "Comparative ct (2^-ddct)") {
     # Bar plot
     plot <-
       ggplot(comparative_ct, aes(x = label, y = !!sym(g))) +
-      geom_bar(aes(fill = calibrator), stat = "identity", colour = "black") +
-      scale_fill_manual(values = c("TRUE" = "darkgrey", "FALSE" = "blue")) +
+      geom_bar(aes(fill = !!sym(calibrator_group_var), colour = !!sym(calibrator_var)),
+               stat = "identity") +
+      # geom_bar(aes(fill = calibrator), stat = "identity", colour = "black") +
+      scale_colour_manual(values = c("TRUE" = "blue", "FALSE" = NA)) +
       geom_text(aes(label = round(!!sym(g), 2)), vjust=-0.3) +
       geom_hline(yintercept = 1, linetype = "dashed") +
       { if (y_log) {
@@ -1062,7 +1101,7 @@ if (analysis_method == "Comparative ct (2^-ddct)") {
       labs(title = g,
            x = unique_id_label,
            y = paste0(g, " relative expression"),
-           fill = "Calibrator") +
+           fill = "Calibrator group", colour = "Calibrator") +
       theme(plot.title = element_text(hjust = 0.5, face = "bold"),
             axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)
             # text = element_text(size = 15)
@@ -1087,6 +1126,13 @@ if (analysis_method == "Comparative ct (2^-ddct)") {
                  names_to = "target",
                  values_to = "relative_expression") %>%
     split(f = as.factor(.$target))
+  
+  # Export quantification table
+  rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+                 sheetname = "quantification")
+  write.xlsx(rbindlist(quantification),
+             file = file.path(out_dir, "qpcr.xlsx"),
+             sheetName = "quantification", append = T, row.names = F)
   
   # Dependent variables vector for stats
   dependent_vector <- c("Relative expression" = "relative_expression")
@@ -1118,6 +1164,13 @@ if (analysis_method == "Standard curve") {
     return(y)
     
   })
+  
+  # Export quantification table
+  rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+                 sheetname = "quantification")
+  write.xlsx(rbindlist(quantification),
+             file = file.path(out_dir, "qpcr.xlsx"),
+             sheetName = "quantification", append = T, row.names = F)
   
   # Dependent variables vector for stats
   dependent_vector <- c("predict_conc", "total_DNA")

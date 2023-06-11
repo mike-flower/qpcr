@@ -49,6 +49,14 @@ qpcr_stats <- function(quantification, grouping_vars, dependent_vars, y_log, hid
     
   })
   
+  # Export quantification table
+  rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
+                 sheetname = "quantification_clean")
+  write.xlsx(rbindlist(quantification_clean),
+             file = file.path(out_dir, "qpcr.xlsx"),
+             sheetName = "quantification_clean", append = T, row.names = F)
+  
+  
   
   
   #===============================================================================
@@ -67,7 +75,7 @@ qpcr_stats <- function(quantification, grouping_vars, dependent_vars, y_log, hid
     ttest_plot <- lapply(quantification_clean, function(x) {
       
       # # Manual
-      # x = quantification_clean[[2]]
+      # x = quantification_clean[[1]]
       
       # Extract target
       t <- as.character(
@@ -87,18 +95,26 @@ qpcr_stats <- function(quantification, grouping_vars, dependent_vars, y_log, hid
       # t-test
       if(nrow(group_count %>% filter(n_samples > 1)) > 1) {
         
-        ttest <- x %>%
-          left_join(group_count, by = grouping_vars$var) %>%
-          filter(n_samples > 1) %>%
-          droplevels() %>% # https://stackoverflow.com/questions/75227674/r-t-test-errors-with-not-enough-y-observations-but-there-are-plenty-of-x-an
-          group_by_at(grouping_vars$var[-1]) %>% # First grouping variable is used as independent variable in t-test
-          t_test(as.formula(paste0(dependent_vars[[d]], " ~ ", grouping_vars$var[1]))) %>%
-          add_y_position()
+        ttest <- tryCatch(expr = {
+          x %>%
+            left_join(group_count, by = grouping_vars$var) %>%
+            filter(n_samples > 1) %>%
+            droplevels() %>% # https://stackoverflow.com/questions/75227674/r-t-test-errors-with-not-enough-y-observations-but-there-are-plenty-of-x-an
+            group_by_at(grouping_vars$var[-1]) %>% # First grouping variable is used as independent variable in t-test
+            t_test(as.formula(paste0(dependent_vars[[d]], " ~ ", grouping_vars$var[1]))) %>%
+            add_y_position()
+        }, error = function(cond) {
+          message(paste("Error:"))
+          message(cond)
+          return(NA)
+        }, warning = function(cond) {
+          message(paste("Warning:"))
+          message(cond)
+          return(NA)
+        })
         
       } else {
-        
         ttest <- NA
-        
       }
       
       ttest
@@ -107,13 +123,12 @@ qpcr_stats <- function(quantification, grouping_vars, dependent_vars, y_log, hid
       # Export t-test
       if (is.data.frame(ttest)) {
         rm_excel_sheet(file = file.path(out_dir, "qpcr.xlsx"),
-                       sheetname = paste0("ttest_", dependent_vars[[d]], "_", t))
+                       sheetname = substr(paste0("ttest_", dependent_vars[[d]], "_", t), 1, 31))
         write.xlsx(data.frame(ttest) %>%
                      mutate(groups = as.character(groups)),
                    file = file.path(out_dir, "qpcr.xlsx"),
                    sheetName = paste0("ttest_", dependent_vars[[d]], "_", t), append = T, row.names = F)
       }
-      
       
       # Set group plot locations
       x_axis <- grouping_vars$var[match("x-axis", grouping_vars$loc)]
@@ -142,7 +157,6 @@ qpcr_stats <- function(quantification, grouping_vars, dependent_vars, y_log, hid
       #   facet_formula <- NA
       # }
       # facet_formula
-      #### I'M HERE, NEED TO MODIFY SO FORMULA WORKS WITH ONLY ONE GROUPING VARIABLE
       
       
       # Plot
@@ -153,7 +167,7 @@ qpcr_stats <- function(quantification, grouping_vars, dependent_vars, y_log, hid
           } + # https://stackoverflow.com/questions/22915337/if-else-condition-in-ggplot-to-add-an-extra-layer
           geom_violin(trim = TRUE) +
           geom_boxplot(outlier.shape = NA, width = 0.1) +
-          geom_jitter(width = 0.1, height = 0, size = 3) +
+          geom_jitter(width = 0.1, height = 0, size = 2) +
           { if (is.data.frame(ttest)) 
             stat_pvalue_manual(ttest,
                                label = ifelse("p.adj.signif" %in% names(ttest), "p.adj.signif", "p"),
@@ -213,15 +227,26 @@ qpcr_stats <- function(quantification, grouping_vars, dependent_vars, y_log, hid
   # Print the plots
   for (d in names(plots)) {
     
-    # Print to pdf
-    print(
-      wrap_plots(plots[[d]][!is.na(plots[[d]])]) +
-        plot_annotation(title = d,
-                        theme = theme(plot.title = element_text(hjust = 0.5, face = "bold")))
-    )
+    # Plot
+    for (n in names(plots[[d]][!is.na(plots[[d]])])) {
+      
+      # Print to pdf
+      print(plots[[d]][!is.na(plots[[d]])][[n]])
+      
+      # Save as png
+      ggsave(file.path(out_dir, paste0("plot_", dependent_vars[[d]], "_", n,".png")))
+      
+    }
     
-    # Save as png
-    ggsave(file.path(out_dir, paste0("plot_", dependent_vars[[d]], ".png")))
+    # # Print to pdf
+    # print(
+    #   wrap_plots(plots[[d]][!is.na(plots[[d]])]) +
+    #     plot_annotation(title = d,
+    #                     theme = theme(plot.title = element_text(hjust = 0.5, face = "bold")))
+    # )
+    # 
+    # # Save as png
+    # ggsave(file.path(out_dir, paste0("plot_", dependent_vars[[d]], ".png")))
     
   }
   
